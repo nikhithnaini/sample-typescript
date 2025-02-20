@@ -55,8 +55,7 @@ stages:
     steps:
     # ✅ Authenticate using Managed Identity
     - script: |
-            az login --identity 
-            az acr login --name $(ACR_NAME)
+            az login --identity --username $(MANAGED_IDENTITY_NAME) --allow-no-subscriptions
       displayName: "Login using Managed Identity"
 
     
