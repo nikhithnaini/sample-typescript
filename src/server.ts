@@ -18,7 +18,7 @@ const API_KEY = process.env.API_KEY || "default_api_key";
 
 // Root route
 app.get("/", (req: Request, res: Response) => {
-  res.send("Welcome to the Home Page");
+  res.send("Welcome to the Home Page of EMR");
 });
 
 // Patient route
