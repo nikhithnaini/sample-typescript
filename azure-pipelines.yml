@@ -13,7 +13,7 @@ variables:
   IMAGE_NAME: "my-app"
   TAG: "$(Build.BuildId)"  # Unique build identifier
   RESOURCE_GROUP: "linux-agent_group"
-  MANAGED_IDENTITY_NAME: "nikhith"  # User Assigned Managed Identity Name
+  MANAGED_IDENTITY_NAME: "a717f3e4-b10b-4a70-b565-a471734765b7"  # User Assigned Managed Identity Name
 
 stages:
 - stage: BuildAndPush
@@ -26,7 +26,7 @@ stages:
 
     # ✅ Authenticate to ACR using Managed Identity (No Secrets)
     - script: |
-        az login --identity --client-id a717f3e4-b10b-4a70-b565-a471734765b7
+        az login --identity --client-id $(MANAGED_IDENTITY_NAME)
       displayName: "Login to ACR with Managed Identity"
 
     
