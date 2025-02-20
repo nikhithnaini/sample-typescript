@@ -60,9 +60,10 @@ stages:
 
     # ✅ Deploy container to Azure App Service
     - script: |
-        az webapp config container set --name $(APP_NAME) --resource-group $(RESOURCE_GROUP) \
-          --docker-custom-image-name $(ACR_NAME).azurecr.io/$(IMAGE_NAME):$(TAG) \
-          --docker-registry-server-url https://$(ACR_NAME).azurecr.io
+        az webapp config container set --name $(APP_NAME) \
+              --resource-group $(RESOURCE_GROUP) \
+              --container-image-name $(ACR_NAME).azurecr.io/$(IMAGE_NAME):$(TAG) \
+              --container-registry-url https://$(ACR_NAME).azurecr.io
       displayName: "Deploy Container to App Service"
 
     # ✅ Set application settings (Expose Port 5000)
