@@ -49,13 +49,13 @@ stages:
   displayName: "Deploy to Azure App Service"
   jobs:
   - job: DeployContainer
-    pool:
-      vmImage: "ubuntu-latest"
+    pool: linux-agent
+      
 
     steps:
     # ✅ Authenticate using Managed Identity
     - script: |
-            az login --identity --username $(MANAGED_IDENTITY_NAME) --allow-no-subscriptions
+            az login --identity --client-id $(MANAGED_IDENTITY_NAME) --allow-no-subscriptions
       displayName: "Login using Managed Identity"
 
     
