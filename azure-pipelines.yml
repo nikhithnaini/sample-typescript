@@ -26,8 +26,7 @@ stages:
 
     # ✅ Authenticate to ACR using Managed Identity (No Secrets)
     - script: |
-        az login --identity --username $(MANAGED_IDENTITY_NAME)
-        az acr login --name $(ACR_NAME)
+        az acr login --name $(ACR_NAME) --identity
       displayName: "Login to ACR with Managed Identity"
 
     # ✅ Build the Docker Image
