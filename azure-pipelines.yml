@@ -8,7 +8,7 @@ trigger:
 variables:
   ACR_NAME: "typescriptimage"  # Azure Container Registry name
   IMAGE_NAME: "my-app"
-  TAG: "$(Build.BuildId)"  # Unique build identifier
+  TAG: "latest"  # Unique build identifier
   RESOURCE_GROUP: "linux-agent_group"
   MANAGED_IDENTITY_NAME: "a717f3e4-b10b-4a70-b565-a471734765b7"  # User Assigned Managed Identity Client ID
   APP_NAME: "typescript"  # Replace with your Azure App Service name
@@ -55,6 +55,7 @@ stages:
     steps:
     # ✅ Authenticate using Managed Identity
     - script: |
+            az login --identity --client-id $(MANAGED_IDENTITY_NAME)
       displayName: "Login using Managed Identity"
 
     # ✅ Deploy container to Azure App Service
