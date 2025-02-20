@@ -55,7 +55,7 @@ stages:
     steps:
     # ✅ Authenticate using Managed Identity
     - script: |
-            az login --identity --client-id $(MANAGED_IDENTITY_NAME)
+            az login --identity 
             az acr login --name $(ACR_NAME)
       displayName: "Login using Managed Identity"
 
