@@ -4,24 +4,43 @@
 # https://docs.microsoft.com/azure/devops/pipelines/languages/javascript
 
 trigger:
-- main
+  branches:
+    include:
+      - main  # Runs pipeline on main branch commits
 
-pool: linux-agent
-  
+variables:
+  ACR_NAME: "typescriptimage"  # Replace with your ACR name
+  IMAGE_NAME: "my-app"
+  TAG: "$(Build.BuildId)"  # Unique build identifier
+  RESOURCE_GROUP: "linux-agent_group"
+  MANAGED_IDENTITY_NAME: "nikhith"  # User Assigned Managed Identity Name
 
 stages:
-  - stage: Build
-    displayName: 'Build Stage'
-    jobs:
-      - job: BuildJob
-        steps:
-          - script: echo "Building the project..."
+- stage: BuildAndPush
+  displayName: "Build & Push Docker Image"
+  jobs:
+  - job: BuildAndPushImage
+    pool:
+      name: linux-agent  # Ensure Docker is installed on the agent
+    steps:
 
-  - stage: Test
-    displayName: 'Test Stage'
-    jobs:
-      - job: TestJob
-        steps:
-          - script: echo "testing the project..."
-      
+    # ✅ Authenticate to ACR using Managed Identity (No Secrets)
+    - script: |
+        az login --identity --username $(MANAGED_IDENTITY_NAME)
+        az acr login --name $(ACR_NAME)
+      displayName: "Login to ACR with Managed Identity"
 
+    # ✅ Build the Docker Image
+    - script: |
+        docker build -t $(ACR_NAME).azurecr.io/$(IMAGE_NAME):$(TAG) .
+      displayName: "Build Docker Image"
+
+    # ✅ Push the Image to ACR
+    - script: |
+        docker push $(ACR_NAME).azurecr.io/$(IMAGE_NAME):$(TAG)
+      displayName: "Push Image to ACR"
+
+    # ✅ Show Pushed Image
+    - script: |
+        az acr repository show-tags --name $(ACR_NAME) --repository $(IMAGE_NAME)
+      displayName: "Verify Image in ACR"
