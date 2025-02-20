@@ -6,8 +6,8 @@
 trigger:
 - main
 
-pool:
-  vmImage: ubuntu-latest
+pool: linux-agent
+  
 
 stages:
   - stage: Build
