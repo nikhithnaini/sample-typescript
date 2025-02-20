@@ -55,7 +55,6 @@ stages:
     steps:
     # ✅ Authenticate using Managed Identity
     - script: |
-        az login --identity --client-id $(MANAGED_IDENTITY_NAME)
       displayName: "Login using Managed Identity"
 
     # ✅ Deploy container to Azure App Service
