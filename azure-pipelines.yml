@@ -53,10 +53,15 @@ stages:
       vmImage: "ubuntu-latest"
 
     steps:
-    # # ✅ Authenticate using Managed Identity
-    # - script: |
-    #         az login --identity --username $(MANAGED_IDENTITY_NAME)
-    #   displayName: "Login using Managed Identity"
+    # ✅ Authenticate using Managed Identity
+    - script: |
+            az login --identity --username $(MANAGED_IDENTITY_NAME)
+            az acr login --name $(ACR_NAME)
+  
+
+      displayName: "Login using Managed Identity"
+
+    
 
     # ✅ Deploy container to Azure App Service
     - script: |
