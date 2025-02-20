@@ -26,6 +26,7 @@ stages:
 
     # ✅ Authenticate to ACR using Managed Identity (No Secrets)
     - script: |
+        az login --identity
         az acr login --name $(ACR_NAME) --identity
       displayName: "Login to ACR with Managed Identity"
 
