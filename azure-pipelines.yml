@@ -1,7 +1,4 @@
-# Node.js
-# Build a general Node.js project with npm.
-# Add steps that analyze code, save build artifacts, deploy, and more:
-# https://docs.microsoft.com/azure/devops/pipelines/languages/javascript
+# Node.js CI/CD Pipeline for Azure App Service using Managed Identity
 
 trigger:
   branches:
@@ -9,19 +6,21 @@ trigger:
       - main  # Runs pipeline on main branch commits
 
 variables:
-  ACR_NAME: "typescriptimage"  # Replace with your ACR name
+  ACR_NAME: "typescriptimage"  # Azure Container Registry name
   IMAGE_NAME: "my-app"
   TAG: "$(Build.BuildId)"  # Unique build identifier
   RESOURCE_GROUP: "linux-agent_group"
-  MANAGED_IDENTITY_NAME: "a717f3e4-b10b-4a70-b565-a471734765b7"  # User Assigned Managed Identity Name
+  MANAGED_IDENTITY_NAME: "a717f3e4-b10b-4a70-b565-a471734765b7"  # User Assigned Managed Identity Client ID
+  APP_NAME: "typescript"  # Replace with your Azure App Service name
 
 stages:
+# ✅ **Stage 1: Build and Push Docker Image**
 - stage: BuildAndPush
   displayName: "Build & Push Docker Image"
   jobs:
   - job: BuildAndPushImage
     pool:
-      name: linux-agent  # Ensure Docker is installed on the agent
+      name: linux-agent  # Ensure the agent has Docker installed
     steps:
 
     # ✅ Authenticate to ACR using Managed Identity (No Secrets)
@@ -30,7 +29,7 @@ stages:
         az acr login --name $(ACR_NAME)
       displayName: "Login to ACR with Managed Identity"
 
-     # ✅ Build the Docker Image
+    # ✅ Build the Docker Image
     - script: |
         docker build -t $(ACR_NAME).azurecr.io/$(IMAGE_NAME):$(TAG) .
       displayName: "Build Docker Image"
@@ -45,3 +44,34 @@ stages:
         az acr repository show-tags --name $(ACR_NAME) --repository $(IMAGE_NAME)
       displayName: "Verify Image in ACR"
 
+# ✅ **Stage 2: Deploy Container to Azure App Service**
+- stage: Deploy
+  displayName: "Deploy to Azure App Service"
+  jobs:
+  - job: DeployContainer
+    pool:
+      vmImage: "ubuntu-latest"
+
+    steps:
+    # ✅ Authenticate using Managed Identity
+    - script: |
+        az login --identity --client-id $(MANAGED_IDENTITY_NAME)
+      displayName: "Login using Managed Identity"
+
+    # ✅ Deploy container to Azure App Service
+    - script: |
+        az webapp config container set --name $(APP_NAME) --resource-group $(RESOURCE_GROUP) \
+          --docker-custom-image-name $(ACR_NAME).azurecr.io/$(IMAGE_NAME):$(TAG) \
+          --docker-registry-server-url https://$(ACR_NAME).azurecr.io
+      displayName: "Deploy Container to App Service"
+
+    # ✅ Set application settings (Expose Port 5000)
+    - script: |
+        az webapp config appsettings set --name $(APP_NAME) --resource-group $(RESOURCE_GROUP) \
+          --settings WEBSITES_PORT=5000
+      displayName: "Set Port to 5000"
+
+    # ✅ Restart App Service to apply changes
+    - script: |
+        az webapp restart --name $(APP_NAME) --resource-group $(RESOURCE_GROUP)
+      displayName: "Restart App Service"
