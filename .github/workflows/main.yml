@@ -1,51 +1,18 @@
-name: CI/CD Pipeline
-
-on:
-  push:
-    branches:
-      - main  # Triggers when code is pushed to the main branch
-  workflow_dispatch:  # Allows manual trigger
-
-jobs:
-  build-and-deploy:
-    runs-on: ubuntu-latest
-
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Set up Node.js
-      uses: actions/setup-node@v3
-      with:
-        node-version: '22'
-
-    - name: Install dependencies
-      run: npm install
-
-    - name: Build the app
-      run: npm run build
-    - name: checking secret 
-      run: echo '${{ secrets.AZURE_CREDENTIALS }}' | jq .
-    - name: Azure Login
-      uses: azure/login@v1
-      with:
-        creds: ${{ secrets.AZURE_CREDENTIALS }}
-        
-    
-    - name: Check if ACR exists, create if not
-      id: acr_check
+ - name: Check if Container App exists, create if not
+      id: container_app_check
       run: |
-        ACR_EXISTS=$(az acr show --name ${{ secrets.REGISTRY_NAME }} --resource-group ${{ secrets.RESOURCE_GROUP }} --query "name" --output tsv || echo "notfound")
-        if [[ "$ACR_EXISTS" == "notfound" ]]; then
-          echo "ACR not found. Creating..."
-          az acr create --name ${{ secrets.REGISTRY_NAME }} --resource-group ${{ secrets.RESOURCE_GROUP }} --sku Basic
+        CONTAINER_APP_EXISTS=$(az containerapp show --name ${{ secrets.CONTAINER_APP_NAME }} --resource-group ${{ secrets.RESOURCE_GROUP }} --query "name" --output tsv || echo "notfound")
+        if [[ "$CONTAINER_APP_EXISTS" == "notfound" ]]; then
+          echo "Container App not found. Creating..."
+          az containerapp create \
+            --name ${{ secrets.CONTAINER_APP_NAME }} \
+            --resource-group ${{ secrets.RESOURCE_GROUP }} \
+            --environment ${{ secrets.ENVIRONMENT_NAME }} \
+            --image $IMAGE_TAG \
+            --target-port 80 \
+            --ingress external \
+            --registry-server ${{ secrets.REGISTRY_NAME }}.azurecr.io \
+            --query "name"
         else
-          echo "ACR already exists."
+          echo "Container App already exists."
         fi
-    - name: Build and Push Docker Image to ACR
-      run: |
-        IMAGE_TAG=${{ secrets.REGISTRY_NAME }}.azurecr.io/myapp:${{ github.sha }}
-        az acr login --name ${{ secrets.REGISTRY_NAME }}
-        docker build -t $IMAGE_TAG .
-        docker push $IMAGE_TAG
-        echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
