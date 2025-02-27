@@ -92,10 +92,16 @@ jobs:
         echo "Granting ACRPull role to Managed Identity..."
         az role assignment create --assignee $PRINCIPAL_ID --scope $(az acr show --name ${{ secrets.REGISTRY_NAME }} --query "id" --output tsv) --role AcrPull
 
+        echo "Waiting for role assignment to propagate..."
+        sleep 30  # Ensures role takes effect
+
     - name: Deploy Azure Container App (Update with Image)
       run: |
         echo "Updating Azure Container App with new image..."
         az containerapp update \
+          --name ${{ secrets.APP_NAME }} \
+          --resource-group ${{ secrets.RESOURCE_GROUP }} \
+          --image ${{ secrets.REGISTRY_NAME }}.azurecr.io/myapp:${{ github.sha }} || sleep 10 && az containerapp update \
           --name ${{ secrets.APP_NAME }} \
           --resource-group ${{ secrets.RESOURCE_GROUP }} \
           --image ${{ secrets.REGISTRY_NAME }}.azurecr.io/myapp:${{ github.sha }}
