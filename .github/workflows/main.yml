@@ -46,7 +46,7 @@ jobs:
         else
           echo "ACR already exists."
         fi
-
+    
     - name: Build and Push Docker Image to ACR
       run: |
         IMAGE_TAG=${{ secrets.REGISTRY_NAME }}.azurecr.io/myapp:${{ github.sha }}
@@ -70,12 +70,12 @@ jobs:
         APP_EXISTS=$(az containerapp show --name ${{ secrets.APP_NAME }} --resource-group ${{ secrets.RESOURCE_GROUP }} --query "name" --output tsv || echo "notfound")
         if [ "$APP_EXISTS" == "notfound" ]; then
           echo "Creating Azure Container App..."
-          az containerapp create --name ${{ secrets.APP_NAME }} --resource-group ${{ secrets.RESOURCE_GROUP }} --image ${{ secrets.REGISTRY_NAME }}.azurecr.io/myapp:${{ github.sha }} --environment ${{ secrets.APP_ENVIRONMENT }} --cpu 0.5 --memory 1.0Gi --ingress external --target-port 3000 --registry-server ${{ secrets.REGISTRY_NAME }}.azurecr.io --identity system
+          az containerapp create --name ${{ secrets.APP_NAME }} --resource-group ${{ secrets.RESOURCE_GROUP }} --image ${{ secrets.REGISTRY_NAME }}.azurecr.io/myapp:${{ github.sha }} --environment ${{ secrets.APP_ENVIRONMENT }} --cpu 0.5 --memory 1.0Gi --ingress external --target-port 3000 --registry-server ${{ secrets.REGISTRY_NAME }}.azurecr.io --system-assigned
         else
           echo "Updating existing Azure Container App..."
           az containerapp update --name ${{ secrets.APP_NAME }} --resource-group ${{ secrets.RESOURCE_GROUP }} --image ${{ secrets.REGISTRY_NAME }}.azurecr.io/myapp:${{ github.sha }}
         fi
-
+    
     - name: Configure scaling and idle timeout
       run: |
         az containerapp update --name ${{ secrets.APP_NAME }} --resource-group ${{ secrets.RESOURCE_GROUP }} --min-replicas 0 --max-replicas 5
