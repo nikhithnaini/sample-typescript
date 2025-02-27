@@ -25,14 +25,11 @@ jobs:
     - name: Build the app
       run: npm run build
 
-    - name: Checking secret 
-      run: echo '${{ secrets.AZURE_CREDENTIALS }}' | jq .
-
     - name: Azure Login
       uses: azure/login@v1
       with:
         creds: ${{ secrets.AZURE_CREDENTIALS }}
-        
+
     - name: Register Microsoft.App Provider
       run: az provider register -n Microsoft.App --wait
 
@@ -46,7 +43,7 @@ jobs:
         else
           echo "ACR already exists."
         fi
-    
+
     - name: Build and Push Docker Image to ACR
       run: |
         IMAGE_TAG=${{ secrets.REGISTRY_NAME }}.azurecr.io/myapp:${{ github.sha }}
@@ -54,7 +51,7 @@ jobs:
         docker build -t $IMAGE_TAG .
         docker push $IMAGE_TAG
         echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
-    
+
     - name: Ensure Azure Container App Environment exists
       run: |
         ENV_EXISTS=$(az containerapp env show --name ${{ secrets.APP_ENVIRONMENT }} --resource-group ${{ secrets.RESOURCE_GROUP }} --query "name" --output tsv || echo "notfound")
@@ -65,7 +62,7 @@ jobs:
           echo "Environment already exists."
         fi
 
-    - name: Deploy Azure Container App
+    - name: Deploy Azure Container App (First-time Setup)
       run: |
         APP_EXISTS=$(az containerapp show --name ${{ secrets.APP_NAME }} --resource-group ${{ secrets.RESOURCE_GROUP }} --query "name" --output tsv || echo "notfound")
         if [ "$APP_EXISTS" == "notfound" ]; then
@@ -73,23 +70,39 @@ jobs:
           az containerapp create \
             --name ${{ secrets.APP_NAME }} \
             --resource-group ${{ secrets.RESOURCE_GROUP }} \
-            --image $IMAGE_TAG \
             --environment ${{ secrets.APP_ENVIRONMENT }} \
             --cpu 0.5 --memory 1.0Gi \
             --ingress external --target-port 3000 \
             --registry-server ${{ secrets.REGISTRY_NAME }}.azurecr.io \
             --system-assigned
-          
-          PRINCIPAL_ID=$(az containerapp show --name ${{ secrets.APP_NAME }} --resource-group ${{ secrets.RESOURCE_GROUP }} --query identity.principalId --output tsv)
-          az role assignment create \
-            --assignee $PRINCIPAL_ID \
-            --role "AcrPull" \
-            --scope /subscriptions/${{ secrets.SUBSCRIPTION_ID }}/resourceGroups/${{ secrets.RESOURCE_GROUP }}/providers/Microsoft.ContainerRegistry/registries/${{ secrets.REGISTRY_NAME }}
         else
-          echo "Updating existing Azure Container App..."
-          az containerapp update --name ${{ secrets.APP_NAME }} --resource-group ${{ secrets.RESOURCE_GROUP }} --image $IMAGE_TAG
+          echo "Azure Container App already exists."
         fi
-    
+
+    - name: Grant ACRPull Role to Container App Managed Identity
+      run: |
+        echo "Retrieving Managed Identity Principal ID..."
+        PRINCIPAL_ID=$(az containerapp show --name ${{ secrets.APP_NAME }} --resource-group ${{ secrets.RESOURCE_GROUP }} --query "identity.principalId" --output tsv)
+        
+        if [ -z "$PRINCIPAL_ID" ]; then
+          echo "ERROR: Managed Identity not found for Container App!"
+          exit 1
+        fi
+
+        echo "Granting ACRPull role to Managed Identity..."
+        az role assignment create --assignee $PRINCIPAL_ID --scope $(az acr show --name ${{ secrets.REGISTRY_NAME }} --query "id" --output tsv) --role AcrPull
+
+    - name: Deploy Azure Container App (Update with Image)
+      run: |
+        echo "Updating Azure Container App with new image..."
+        az containerapp update \
+          --name ${{ secrets.APP_NAME }} \
+          --resource-group ${{ secrets.RESOURCE_GROUP }} \
+          --image ${{ secrets.REGISTRY_NAME }}.azurecr.io/myapp:${{ github.sha }}
+
     - name: Configure scaling and idle timeout
       run: |
-        az containerapp update --name ${{ secrets.APP_NAME }} --resource-group ${{ secrets.RESOURCE_GROUP }} --min-replicas 0 --max-replicas 5
+        az containerapp update \
+          --name ${{ secrets.APP_NAME }} \
+          --resource-group ${{ secrets.RESOURCE_GROUP }} \
+          --min-replicas 0 --max-replicas 5
