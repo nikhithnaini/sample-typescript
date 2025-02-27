@@ -1,23 +1,24 @@
 name: CI/CD Pipeline
 
 on:
-  push:
-    branches:
-      - main  # Triggers when code is pushed to the main branch
-  workflow_dispatch:  # Allows manual trigger
+  schedule:
+    - cron: '0 21 * * *' # Runs at 9:00 PM UTC every day
+  workflow_dispatch: # Allows manual triggering of the workflow
 
 jobs:
-  build-and-deploy:
+  build:
     runs-on: ubuntu-latest
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@v2
+      with:
+        ref: main # Ensure the main branch is checked out
 
     - name: Set up Node.js
-      uses: actions/setup-node@v3
+      uses: actions/setup-node@v2
       with:
-        node-version: '22'
+        node-version: '22.10.0'
 
     - name: Install dependencies
       run: npm install
@@ -25,59 +26,62 @@ jobs:
     - name: Build the app
       run: npm run build
 
-    - name: Checking secret 
-      run: echo '${{ secrets.AZURE_CREDENTIALS }}' | jq .
-
-    - name: Azure Login
+    - name: Log in to Azure CLI
       uses: azure/login@v1
       with:
         creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-    - name: Check if ACR exists, create if not
-      id: acr_check
+    - name: Create Azure Container Registry if not exists
       run: |
-        ACR_EXISTS=$(az acr show --name ${{ secrets.REGISTRY_NAME }} --resource-group ${{ secrets.RESOURCE_GROUP }} --query "name" --output tsv || echo "notfound")
-        if [[ "$ACR_EXISTS" == "notfound" ]]; then
-          echo "ACR not found. Creating..."
-          az acr create --name ${{ secrets.REGISTRY_NAME }} --resource-group ${{ secrets.RESOURCE_GROUP }} --sku Basic
+        az acr show --name ${{ secrets.REGISTRY_NAME }} --resource-group ${{ secrets.RESOURCE_GROUP }} || \
+        az acr create --name ${{ secrets.REGISTRY_NAME }} --resource-group ${{ secrets.RESOURCE_GROUP }} --sku Basic --admin-enabled true
+
+    - name: Enable ACR Admin User
+      run: |
+        az acr update --name ${{ secrets.REGISTRY_NAME }} --admin-enabled true
+
+    - name: Get ACR Admin Credentials
+      id: acr-credentials
+      run: |
+        echo "username=$(az acr credential show --name ${{ secrets.REGISTRY_NAME }} --query "username" --output tsv)" >> $GITHUB_ENV
+        echo "password=$(az acr credential show --name ${{ secrets.REGISTRY_NAME }} --query "passwords[0].value" --output tsv)" >> $GITHUB_ENV
+
+    - name: Build and push Docker image
+      run: |
+        docker build -t ${{ secrets.REGISTRY_NAME }}.azurecr.io/myapp:${{ github.sha }} .
+        echo ${{ env.password }} | docker login ${{ secrets.REGISTRY_NAME }}.azurecr.io -u ${{ env.username }} --password-stdin
+        docker push ${{ secrets.REGISTRY_NAME }}.azurecr.io/myapp:${{ github.sha }}
+
+    - name: Create Log Analytics workspace if not exists
+      run: |
+        az monitor log-analytics workspace show --resource-group ${{ secrets.RESOURCE_GROUP }} --workspace-name ${{ secrets.LOG_ANALYTICS_WORKSPACE }} || \
+        az monitor log-analytics workspace create --resource-group ${{ secrets.RESOURCE_GROUP }} --workspace-name ${{ secrets.LOG_ANALYTICS_WORKSPACE }} --location ${{ secrets.LOCATION }}
+
+    - name: Create Azure Container App Environment if not exists
+      id: create_env
+      run: |
+        LOG_ANALYTICS_WORKSPACE_ID=$(az monitor log-analytics workspace show --resource-group ${{ secrets.RESOURCE_GROUP }} --workspace-name ${{ secrets.LOG_ANALYTICS_WORKSPACE }} --query "customerId" --output tsv)
+        LOG_ANALYTICS_WORKSPACE_KEY=$(az monitor log-analytics workspace get-shared-keys --resource-group ${{ secrets.RESOURCE_GROUP }} --workspace-name ${{ secrets.LOG_ANALYTICS_WORKSPACE }} --query "primarySharedKey" --output tsv)
+        ENV_EXISTS=$(az containerapp env show --name ${{ secrets.APP_ENVIRONMENT }} --resource-group ${{ secrets.RESOURCE_GROUP }} --query "name" --output tsv || echo "notfound")
+        if [ "$ENV_EXISTS" == "notfound" ]; then
+          echo "Environment not found. Creating environment..."
+          az containerapp env create --name ${{ secrets.APP_ENVIRONMENT }} --resource-group ${{ secrets.RESOURCE_GROUP }} --location ${{ secrets.LOCATION }} --logs-workspace-id $LOG_ANALYTICS_WORKSPACE_ID --logs-workspace-key $LOG_ANALYTICS_WORKSPACE_KEY
         else
-          echo "ACR already exists."
+          echo "Environment already exists."
+          echo "exists" > env_status.txt
+        fi
+        echo "ENV_STATUS=$(cat env_status.txt)" >> $GITHUB_ENV
+
+    - name: Create Azure Container App if not exists
+      run: |
+        APP_EXISTS=$(az containerapp show --name ${{ secrets.APP_NAME }} --resource-group ${{ secrets.RESOURCE_GROUP }} --query "name" --output tsv || echo "notfound")
+        if [ "$APP_EXISTS" == "notfound" ]; then
+          echo "Creating Azure Container App..."
+          az containerapp create --name ${{ secrets.APP_NAME }} --resource-group ${{ secrets.RESOURCE_GROUP }} --image ${{ secrets.REGISTRY_NAME }}.azurecr.io/myapp:${{ github.sha }} --environment ${{ secrets.APP_ENVIRONMENT }} --cpu 0.5 --memory 1.0Gi --ingress external --target-port 3000 --registry-server ${{ secrets.REGISTRY_NAME }}.azurecr.io --registry-username ${{ env.username }} --registry-password ${{ env.password }} --system-assigned
+        else
+          echo "Azure Container App already exists. Skipping creation."
         fi
 
-    - name: Build and Push Docker Image to ACR
+    - name: Configure scaling and idle timeout
       run: |
-        IMAGE_TAG=${{ secrets.REGISTRY_NAME }}.azurecr.io/myapp:${{ github.sha }}
-        az acr login --name ${{ secrets.REGISTRY_NAME }}
-        docker build -t $IMAGE_TAG .
-        docker push $IMAGE_TAG
-        echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
-
-   
-
-    - name: Check if Container App exists, create if not
-      id: container_app_check
-      run: |
-        CONTAINER_APP_EXISTS=$(az containerapp show --name ${{ secrets.APP_NAME }} --resource-group ${{ secrets.RESOURCE_GROUP }} --query "name" --output tsv || echo "notfound")
-        
-        if [[ "$CONTAINER_APP_EXISTS" == "notfound" ]]; then
-          echo "Container App not found. Creating..."
-          az containerapp create \
-            --name ${{ secrets.APP_NAME }} \
-            --resource-group ${{ secrets.RESOURCE_GROUP }} \
-            --environment ${{ secrets.APP_ENVIRONMENT }} \
-            --image $IMAGE_TAG \
-            --target-port 80 \
-            --ingress external \
-            --registry-server ${{ secrets.REGISTRY_NAME }}.azurecr.io \
-            --user-assigned ${{ secrets.MANAGED_IDENTITY_CLIENT_ID }} \
-            --query "name"
-          
-          echo "Container App successfully created with User-Assigned Managed Identity."
-    
-        else
-          echo "Container App already exists. Updating the image..."
-          az containerapp update \
-            --name ${{ secrets.APP_NAME }} \
-            --resource-group ${{ secrets.RESOURCE_GROUP }} \
-            --image $IMAGE_TAG
-        fi
+        az containerapp update --name ${{ secrets.APP_NAME }} --resource-group ${{ secrets.RESOURCE_GROUP }} --min-replicas 0 --max-replicas 5
