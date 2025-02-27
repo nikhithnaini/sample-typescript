@@ -51,3 +51,27 @@ jobs:
         docker build -t $IMAGE_TAG .
         docker push $IMAGE_TAG
         echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
+    - name: Ensure Azure Container App Environment exists
+      run: |
+        ENV_EXISTS=$(az containerapp env show --name ${{ secrets.APP_ENVIRONMENT }} --resource-group ${{ secrets.RESOURCE_GROUP }} --query "name" --output tsv || echo "notfound")
+        if [ "$ENV_EXISTS" == "notfound" ]; then
+          echo "Creating environment..."
+          az containerapp env create --name ${{ secrets.APP_ENVIRONMENT }} --resource-group ${{ secrets.RESOURCE_GROUP }} --location ${{ secrets.LOCATION }}
+        else
+          echo "Environment already exists."
+        fi
+
+    - name: Deploy Azure Container App
+      run: |
+        APP_EXISTS=$(az containerapp show --name ${{ secrets.APP_NAME }} --resource-group ${{ secrets.RESOURCE_GROUP }} --query "name" --output tsv || echo "notfound")
+        if [ "$APP_EXISTS" == "notfound" ]; then
+          echo "Creating Azure Container App..."
+          az containerapp create --name ${{ secrets.APP_NAME }} --resource-group ${{ secrets.RESOURCE_GROUP }} --image ${{ secrets.REGISTRY_NAME }}.azurecr.io/myapp:${{ github.sha }} --environment ${{ secrets.APP_ENVIRONMENT }} --cpu 0.5 --memory 1.0Gi --ingress external --target-port 3000 --registry-server ${{ secrets.REGISTRY_NAME }}.azurecr.io --identity system
+        else
+          echo "Updating existing Azure Container App..."
+          az containerapp update --name ${{ secrets.APP_NAME }} --resource-group ${{ secrets.RESOURCE_GROUP }} --image ${{ secrets.REGISTRY_NAME }}.azurecr.io/myapp:${{ github.sha }}
+        fi
+
+    - name: Configure scaling and idle timeout
+      run: |
+        az containerapp update --name ${{ secrets.APP_NAME }} --resource-group ${{ secrets.RESOURCE_GROUP }} --min-replicas 0 --max-replicas 5
