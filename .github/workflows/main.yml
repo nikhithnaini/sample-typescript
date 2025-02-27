@@ -24,15 +24,14 @@ jobs:
 
     - name: Build the app
       run: npm run build
-
-    - name: Checking secret 
+    - name: checking secret 
       run: echo '${{ secrets.AZURE_CREDENTIALS }}' | jq .
-
     - name: Azure Login
       uses: azure/login@v1
       with:
         creds: ${{ secrets.AZURE_CREDENTIALS }}
-
+        
+    
     - name: Check if ACR exists, create if not
       id: acr_check
       run: |
@@ -43,7 +42,6 @@ jobs:
         else
           echo "ACR already exists."
         fi
-
     - name: Build and Push Docker Image to ACR
       run: |
         IMAGE_TAG=${{ secrets.REGISTRY_NAME }}.azurecr.io/myapp:${{ github.sha }}
@@ -51,31 +49,3 @@ jobs:
         docker build -t $IMAGE_TAG .
         docker push $IMAGE_TAG
         echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
-
-    - name: Ensure Container App has proper ACR Pull permissions
-      run: |
-        echo "Ensuring the Azure Container App has ACR pull permissions..."
-        az role assignment create --assignee ${{ secrets.AZURE_CREDENTIALS.client_id }} \
-          --role AcrPull \
-          --scope "/subscriptions/${{ secrets.SUBSCRIPTION_ID }}/resourceGroups/${{ secrets.RESOURCE_GROUP }}/providers/Microsoft.ContainerRegistry/registries/${{ secrets.REGISTRY_NAME }}"
-
-    - name: Check if Container App exists
-      id: container_app_check
-      run: |
-        CONTAINER_APP_EXISTS=$(az containerapp show --name myapp --resource-group ${{ secrets.RESOURCE_GROUP }} --query "name" --output tsv || echo "notfound")
-        if [[ "$CONTAINER_APP_EXISTS" == "notfound" ]]; then
-          echo "Container App not found. Creating..."
-          az containerapp create \
-            --name myapp \
-            --resource-group ${{ secrets.RESOURCE_GROUP }} \
-            --image ${{ secrets.REGISTRY_NAME }}.azurecr.io/myapp:${{ github.sha }} \
-            --cpu 1 --memory 2Gi \
-            --identity 'UserAssigned'  # Using managed identity for authentication
-        else
-          echo "Container App already exists. Updating..."
-          az containerapp update \
-            --name myapp \
-            --resource-group ${{ secrets.RESOURCE_GROUP }} \
-            --image ${{ secrets.REGISTRY_NAME }}.azurecr.io/myapp:${{ github.sha }} \
-            --cpu 1 --memory 2Gi
-        fi
