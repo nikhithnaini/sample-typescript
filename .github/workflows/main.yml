@@ -3,8 +3,8 @@ name: CI/CD Pipeline
 on:
   push:
     branches:
-      - main  # Triggers when code is pushed to the main branch
-  workflow_dispatch:  # Allows manual trigger
+      - main
+  workflow_dispatch:
 
 jobs:
   build-and-deploy:
@@ -33,21 +33,25 @@ jobs:
     - name: Register Microsoft.App Provider
       run: az provider register -n Microsoft.App --wait
 
-    - name: Check if ACR exists, create if not
-      id: acr_check
+    - name: Ensure ACR exists, create if not
       run: |
         ACR_EXISTS=$(az acr show --name ${{ secrets.REGISTRY_NAME }} --resource-group ${{ secrets.RESOURCE_GROUP }} --query "name" --output tsv || echo "notfound")
         if [[ "$ACR_EXISTS" == "notfound" ]]; then
-          echo "ACR not found. Creating..."
+          echo "Creating ACR..."
           az acr create --name ${{ secrets.REGISTRY_NAME }} --resource-group ${{ secrets.RESOURCE_GROUP }} --sku Basic
         else
           echo "ACR already exists."
         fi
 
+    - name: Authenticate with ACR (Explicit Credentials)
+      run: |
+        az acr login --name ${{ secrets.REGISTRY_NAME }} \
+          --username ${{ secrets.AZURE_CONTAINER_REGISTRY_USERNAME }} \
+          --password ${{ secrets.AZURE_CONTAINER_REGISTRY_PASSWORD }}
+
     - name: Build and Push Docker Image to ACR
       run: |
         IMAGE_TAG=${{ secrets.REGISTRY_NAME }}.azurecr.io/myapp:${{ github.sha }}
-        az acr login --name ${{ secrets.REGISTRY_NAME }}
         docker build -t $IMAGE_TAG .
         docker push $IMAGE_TAG
         echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
@@ -56,10 +60,8 @@ jobs:
       run: |
         ENV_EXISTS=$(az containerapp env show --name ${{ secrets.APP_ENVIRONMENT }} --resource-group ${{ secrets.RESOURCE_GROUP }} --query "name" --output tsv || echo "notfound")
         if [ "$ENV_EXISTS" == "notfound" ]; then
-          echo "Creating environment..."
+          echo "Creating Container App Environment..."
           az containerapp env create --name ${{ secrets.APP_ENVIRONMENT }} --resource-group ${{ secrets.RESOURCE_GROUP }} --location ${{ secrets.LOCATION }}
-        else
-          echo "Environment already exists."
         fi
 
     - name: Deploy Azure Container App (First-time Setup)
@@ -74,34 +76,28 @@ jobs:
             --cpu 0.5 --memory 1.0Gi \
             --ingress external --target-port 3000 \
             --registry-server ${{ secrets.REGISTRY_NAME }}.azurecr.io \
-            --system-assigned
+            --user-assigned ${{ secrets.USER_ASSIGNED_IDENTITY }}
         else
           echo "Azure Container App already exists."
         fi
 
-    - name: Grant ACRPull Role to Container App Managed Identity
+    - name: Assign ACRPull Role to Managed Identity
       run: |
-        echo "Retrieving Managed Identity Principal ID..."
         PRINCIPAL_ID=$(az containerapp show --name ${{ secrets.APP_NAME }} --resource-group ${{ secrets.RESOURCE_GROUP }} --query "identity.principalId" --output tsv)
         
         if [ -z "$PRINCIPAL_ID" ]; then
-          echo "ERROR: Managed Identity not found for Container App!"
+          echo "ERROR: Managed Identity not found!"
           exit 1
         fi
 
-        echo "Granting ACRPull role to Managed Identity..."
+        echo "Assigning ACRPull role to Managed Identity..."
         az role assignment create --assignee $PRINCIPAL_ID --scope $(az acr show --name ${{ secrets.REGISTRY_NAME }} --query "id" --output tsv) --role AcrPull
-
-        echo "Waiting for role assignment to propagate..."
-        sleep 30  # Ensures role takes effect
+        sleep 30  # Ensures the role takes effect
 
     - name: Deploy Azure Container App (Update with Image)
       run: |
         echo "Updating Azure Container App with new image..."
         az containerapp update \
-          --name ${{ secrets.APP_NAME }} \
-          --resource-group ${{ secrets.RESOURCE_GROUP }} \
-          --image ${{ secrets.REGISTRY_NAME }}.azurecr.io/myapp:${{ github.sha }} || sleep 10 && az containerapp update \
           --name ${{ secrets.APP_NAME }} \
           --resource-group ${{ secrets.RESOURCE_GROUP }} \
           --image ${{ secrets.REGISTRY_NAME }}.azurecr.io/myapp:${{ github.sha }}
