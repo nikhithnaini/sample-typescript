@@ -52,10 +52,7 @@ jobs:
         docker push $IMAGE_TAG
         echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
 
-    - name: Assign AcrPull role to Managed Identity
-      run: |
-        echo "Assigning AcrPull role to Managed Identity..."
-        az role assignment create --assignee <MANAGED_IDENTITY_OBJECT_ID> --role AcrPull --scope "/subscriptions/1dac2287-a439-41a6-91ff-5882e8fa76e0/resourceGroups/onpoint/providers/Microsoft.ContainerRegistry/registries/onpointregistry"
+   
 
     - name: Check if Container App exists, create if not
       id: container_app_check
