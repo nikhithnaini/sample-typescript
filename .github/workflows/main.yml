@@ -24,14 +24,15 @@ jobs:
 
     - name: Build the app
       run: npm run build
-    - name: checking secret 
+
+    - name: Checking secret 
       run: echo '${{ secrets.AZURE_CREDENTIALS }}' | jq .
+
     - name: Azure Login
       uses: azure/login@v1
       with:
         creds: ${{ secrets.AZURE_CREDENTIALS }}
-        
-    
+
     - name: Check if ACR exists, create if not
       id: acr_check
       run: |
@@ -42,6 +43,7 @@ jobs:
         else
           echo "ACR already exists."
         fi
+
     - name: Build and Push Docker Image to ACR
       run: |
         IMAGE_TAG=${{ secrets.REGISTRY_NAME }}.azurecr.io/myapp:${{ github.sha }}
@@ -49,20 +51,30 @@ jobs:
         docker build -t $IMAGE_TAG .
         docker push $IMAGE_TAG
         echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
+
     - name: Check if Container App exists, create if not
+      id: container_app_check
       run: |
         CONTAINER_APP_EXISTS=$(az containerapp show --name ${{ secrets.APP_NAME }} --resource-group ${{ secrets.RESOURCE_GROUP }} --query "name" --output tsv || echo "notfound")
         if [[ "$CONTAINER_APP_EXISTS" == "notfound" ]]; then
           echo "Container App not found. Creating..."
           az containerapp create \
-            --name ${{ secrets.CONTAINER_APP_NAME }} \
+            --name ${{ secrets.APP_NAME }} \
             --resource-group ${{ secrets.RESOURCE_GROUP }} \
             --environment ${{ secrets.APP_ENVIRONMENT }} \
             --image $IMAGE_TAG \
             --target-port 80 \
             --ingress external \
             --registry-server ${{ secrets.REGISTRY_NAME }}.azurecr.io \
+            --location ${{ secrets.LOCATION }} \
             --query "name"
         else
           echo "Container App already exists."
         fi
+
+    - name: Deploy to Azure Container App
+      run: |
+        az containerapp update \
+          --name ${{ secrets.APP_NAME }} \
+          --resource-group ${{ secrets.RESOURCE_GROUP }} \
+          --image $IMAGE_TAG
