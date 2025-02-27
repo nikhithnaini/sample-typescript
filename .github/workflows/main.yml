@@ -3,8 +3,8 @@ name: CI/CD Pipeline
 on:
   push:
     branches:
-      - main
-  workflow_dispatch:
+      - main  # Triggers when code is pushed to the main branch
+  workflow_dispatch:  # Allows manual trigger
 
 jobs:
   build-and-deploy:
@@ -25,86 +25,60 @@ jobs:
     - name: Build the app
       run: npm run build
 
+    - name: Checking secret 
+      run: echo '${{ secrets.AZURE_CREDENTIALS }}' | jq .
+
     - name: Azure Login
       uses: azure/login@v1
       with:
         creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-    - name: Register Microsoft.App Provider
-      run: az provider register -n Microsoft.App --wait
-
-    - name: Ensure ACR exists, create if not
+    - name: Check if ACR exists, create if not
+      id: acr_check
       run: |
         ACR_EXISTS=$(az acr show --name ${{ secrets.REGISTRY_NAME }} --resource-group ${{ secrets.RESOURCE_GROUP }} --query "name" --output tsv || echo "notfound")
         if [[ "$ACR_EXISTS" == "notfound" ]]; then
-          echo "Creating ACR..."
+          echo "ACR not found. Creating..."
           az acr create --name ${{ secrets.REGISTRY_NAME }} --resource-group ${{ secrets.RESOURCE_GROUP }} --sku Basic
         else
           echo "ACR already exists."
         fi
 
-    - name: Authenticate with ACR (Explicit Credentials)
-      run: |
-        az acr login --name ${{ secrets.REGISTRY_NAME }} \
-          --username ${{ secrets.AZURE_CONTAINER_REGISTRY_USERNAME }} \
-          --password ${{ secrets.AZURE_CONTAINER_REGISTRY_PASSWORD }}
-
     - name: Build and Push Docker Image to ACR
       run: |
         IMAGE_TAG=${{ secrets.REGISTRY_NAME }}.azurecr.io/myapp:${{ github.sha }}
+        az acr login --name ${{ secrets.REGISTRY_NAME }}
         docker build -t $IMAGE_TAG .
         docker push $IMAGE_TAG
         echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
 
-    - name: Ensure Azure Container App Environment exists
+    - name: Check Container App Permissions
       run: |
-        ENV_EXISTS=$(az containerapp env show --name ${{ secrets.APP_ENVIRONMENT }} --resource-group ${{ secrets.RESOURCE_GROUP }} --query "name" --output tsv || echo "notfound")
-        if [ "$ENV_EXISTS" == "notfound" ]; then
-          echo "Creating Container App Environment..."
-          az containerapp env create --name ${{ secrets.APP_ENVIRONMENT }} --resource-group ${{ secrets.RESOURCE_GROUP }} --location ${{ secrets.LOCATION }}
-        fi
-
-    - name: Deploy Azure Container App (First-time Setup)
-      run: |
-        APP_EXISTS=$(az containerapp show --name ${{ secrets.APP_NAME }} --resource-group ${{ secrets.RESOURCE_GROUP }} --query "name" --output tsv || echo "notfound")
-        if [ "$APP_EXISTS" == "notfound" ]; then
-          echo "Creating Azure Container App..."
-          az containerapp create \
-            --name ${{ secrets.APP_NAME }} \
-            --resource-group ${{ secrets.RESOURCE_GROUP }} \
-            --environment ${{ secrets.APP_ENVIRONMENT }} \
-            --cpu 0.5 --memory 1.0Gi \
-            --ingress external --target-port 3000 \
-            --registry-server ${{ secrets.REGISTRY_NAME }}.azurecr.io \
-            --user-assigned ${{ secrets.USER_ASSIGNED_IDENTITY }}
-        else
-          echo "Azure Container App already exists."
-        fi
-
-    - name: Assign ACRPull Role to Managed Identity
-      run: |
-        PRINCIPAL_ID=$(az containerapp show --name ${{ secrets.APP_NAME }} --resource-group ${{ secrets.RESOURCE_GROUP }} --query "identity.principalId" --output tsv)
-        
-        if [ -z "$PRINCIPAL_ID" ]; then
-          echo "ERROR: Managed Identity not found!"
+        echo "Checking if the service principal has permissions to create or update the Container App..."
+        CONTAINER_APP_PERMISSIONS=$(az role assignment list --assignee ${{ secrets.AZURE_CREDENTIALS.client_id }} --scope "/subscriptions/${{ secrets.SUBSCRIPTION_ID }}/resourceGroups/${{ secrets.RESOURCE_GROUP }}/providers/Microsoft.Web/containerApps/myapp" --query "[?roleDefinitionName=='Contributor' || roleDefinitionName=='Owner']" --output tsv)
+        if [ -z "$CONTAINER_APP_PERMISSIONS" ]; then
+          echo "Error: Service principal does not have 'Contributor' or 'Owner' permissions on the Azure Container App."
           exit 1
+        else
+          echo "Service principal has required permissions on the Container App."
         fi
 
-        echo "Assigning ACRPull role to Managed Identity..."
-        az role assignment create --assignee $PRINCIPAL_ID --scope $(az acr show --name ${{ secrets.REGISTRY_NAME }} --query "id" --output tsv) --role AcrPull
-        sleep 30  # Ensures the role takes effect
-
-    - name: Deploy Azure Container App (Update with Image)
+    - name: Check if Container App exists
+      id: container_app_check
       run: |
-        echo "Updating Azure Container App with new image..."
-        az containerapp update \
-          --name ${{ secrets.APP_NAME }} \
-          --resource-group ${{ secrets.RESOURCE_GROUP }} \
-          --image ${{ secrets.REGISTRY_NAME }}.azurecr.io/myapp:${{ github.sha }}
-
-    - name: Configure scaling and idle timeout
-      run: |
-        az containerapp update \
-          --name ${{ secrets.APP_NAME }} \
-          --resource-group ${{ secrets.RESOURCE_GROUP }} \
-          --min-replicas 0 --max-replicas 5
+        CONTAINER_APP_EXISTS=$(az containerapp show --name myapp --resource-group ${{ secrets.RESOURCE_GROUP }} --query "name" --output tsv || echo "notfound")
+        if [[ "$CONTAINER_APP_EXISTS" == "notfound" ]]; then
+          echo "Container App not found. Creating..."
+          az containerapp create \
+            --name myapp \
+            --resource-group ${{ secrets.RESOURCE_GROUP }} \
+            --image ${{ secrets.REGISTRY_NAME }}.azurecr.io/myapp:${{ github.sha }} \
+            --cpu 1 --memory 2Gi
+        else
+          echo "Container App already exists. Updating..."
+          az containerapp update \
+            --name myapp \
+            --resource-group ${{ secrets.RESOURCE_GROUP }} \
+            --image ${{ secrets.REGISTRY_NAME }}.azurecr.io/myapp:${{ github.sha }} \
+            --cpu 1 --memory 2Gi
+        fi
