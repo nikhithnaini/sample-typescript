@@ -58,7 +58,8 @@ jobs:
         az role assignment create \
           --assignee ${{ secrets.MANAGED_IDENTITY_CLIENT_ID }} \
           --role AcrPull \
-          --scope /subscriptions/${{ secrets.SUBSCRIPTION_ID }}/resourceGroups/${{ secrets.RESOURCE_GROUP }}/providers/Microsoft.ContainerRegistry/registries/${{ secrets.REGISTRY_NAME }}
+          --scope "/subscriptions/${{ secrets.SUBSCRIPTION_ID }}/resourceGroups/${{ secrets.RESOURCE_GROUP }}/providers/Microsoft.ContainerRegistry/registries/${{ secrets.REGISTRY_NAME }}"
+
     - name: Check if Container App exists, create if not
       id: container_app_check
       run: |
