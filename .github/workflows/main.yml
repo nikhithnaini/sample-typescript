@@ -43,10 +43,6 @@ jobs:
           echo "ACR already exists."
         fi
 
-    - name: Assign ACR Pull Role to Service Principal
-      run: |
-        SP_ID=$(az ad sp show --id ${{ secrets.AZURE_CLIENT_ID }} --query "id" --output tsv)
-        az role assignment create --assignee $SP_ID --scope /subscriptions/${{ secrets.SUBSCRIPTION_ID }}/resourceGroups/${{ secrets.RESOURCE_GROUP }}/providers/Microsoft.ContainerRegistry/registries/${{ secrets.REGISTRY_NAME }} --role AcrPull
 
     - name: Build and Push Docker Image to ACR
       run: |
