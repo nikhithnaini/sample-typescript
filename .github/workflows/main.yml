@@ -28,7 +28,7 @@ jobs:
     - name: Azure Login
       uses: azure/login@v1
       with:
-        creds: ${{ secrets.AZURE_CREDENTIAL }
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
         
 
     - name: Check if ACR exists, create if not
