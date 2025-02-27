@@ -25,19 +25,23 @@ jobs:
     - name: Build the app
       run: npm run build
 
+    - name: Checking secret 
+      run: echo '${{ secrets.AZURE_CREDENTIALS }}' | jq .
+
     - name: Azure Login
       uses: azure/login@v1
       with:
         creds: ${{ secrets.AZURE_CREDENTIALS }}
-
+        
     - name: Register Microsoft.App Provider
       run: az provider register -n Microsoft.App --wait
 
     - name: Check if ACR exists, create if not
+      id: acr_check
       run: |
         ACR_EXISTS=$(az acr show --name ${{ secrets.REGISTRY_NAME }} --resource-group ${{ secrets.RESOURCE_GROUP }} --query "name" --output tsv || echo "notfound")
         if [[ "$ACR_EXISTS" == "notfound" ]]; then
-          echo "Creating ACR..."
+          echo "ACR not found. Creating..."
           az acr create --name ${{ secrets.REGISTRY_NAME }} --resource-group ${{ secrets.RESOURCE_GROUP }} --sku Basic
         else
           echo "ACR already exists."
@@ -85,6 +89,7 @@ jobs:
 
     - name: Assign AcrPull Role to Managed Identity
       run: |
+        echo "Assigning AcrPull role to Managed Identity..."
         PRINCIPAL_ID=$(az containerapp show --name ${{ secrets.APP_NAME }} --resource-group ${{ secrets.RESOURCE_GROUP }} --query identity.principalId --output tsv)
         az role assignment create \
           --assignee $PRINCIPAL_ID \
