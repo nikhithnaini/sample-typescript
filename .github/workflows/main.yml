@@ -66,7 +66,6 @@ jobs:
             --target-port 80 \
             --ingress external \
             --registry-server ${{ secrets.REGISTRY_NAME }}.azurecr.io \
-            --location ${{ secrets.LOCATION }} \
             --query "name"
         else
           echo "Container App already exists."
