@@ -92,7 +92,7 @@ jobs:
     - name: Check if Container App exists, create if not
       id: container_app_check
       run: |
-        CONTAINER_APP_EXISTS=$(az containerapp show --name ${{ secrets.CONTAINER_APP_NAME }} --resource-group ${{ secrets.RESOURCE_GROUP }} --query "name" --output tsv || echo "notfound")
+        CONTAINER_APP_EXISTS=$(az containerapp show --name ${{ secrets.APP_NAME }} --resource-group ${{ secrets.RESOURCE_GROUP }} --query "name" --output tsv || echo "notfound")
         
         if [[ "$CONTAINER_APP_EXISTS" == "notfound" ]]; then
           echo "Container App not found. Creating..."
