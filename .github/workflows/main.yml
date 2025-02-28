@@ -89,3 +89,24 @@ jobs:
     - name: Assign AcrPull Role to Managed Identity
       run: |
         az role assignment create --assignee ${{ env.PRINCIPAL_ID }} --role AcrPull --scope ${{ env.ACR_ID }} || echo "AcrPull role already assigned or temporarily unavailable."
+    - name: Check if Container App exists, create if not
+      id: container_app_check
+      run: |
+        CONTAINER_APP_EXISTS=$(az containerapp show --name ${{ secrets.CONTAINER_APP_NAME }} --resource-group ${{ secrets.RESOURCE_GROUP }} --query "name" --output tsv || echo "notfound")
+        
+        if [[ "$CONTAINER_APP_EXISTS" == "notfound" ]]; then
+          echo "Container App not found. Creating..."
+          az containerapp create \
+            --name ${{ secrets.CONTAINER_APP_NAME }} \
+            --resource-group ${{ secrets.RESOURCE_GROUP }} \
+            --environment ${{ secrets.APP_ENVIRONMENT }} \
+            --location ${{ secrets.LOCATION }} \
+            --image ${{ secrets.REGISTRY_NAME }}.azurecr.io/myapp:${{ github.sha }} \
+            --registry-server ${{ secrets.REGISTRY_NAME }}.azurecr.io \
+            --identity ${{ secrets.MANAGED_IDENTITY_NAME }} \
+            --cpu 0.5 --memory 1Gi
+            
+          echo "Container App created successfully."
+        else
+          echo "Container App already exists."
+        fi
