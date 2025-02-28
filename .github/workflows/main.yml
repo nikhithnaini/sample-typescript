@@ -3,8 +3,8 @@ name: CI/CD Pipeline
 on:
   push:
     branches:
-      - main  # Triggers when code is pushed to the main branch
-  workflow_dispatch:  # Allows manual trigger
+      - main
+  workflow_dispatch:
 
 jobs:
   build-and-deploy:
@@ -33,11 +33,6 @@ jobs:
       with:
         creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-    - name: Check Azure CLI Version
-      run: |
-        az version
-        az upgrade --yes  # Ensures latest CLI version
-
     - name: Check if ACR exists, create if not
       id: acr_check
       run: |
@@ -59,17 +54,6 @@ jobs:
         docker build -t $IMAGE_TAG .
         docker push $IMAGE_TAG
         echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
-
-    - name: Create Managed Identity if not exists
-      id: managed_identity
-      run: |
-        MI_EXISTS=$(az identity show --name ${{ secrets.MANAGED_IDENTITY_NAME }} --resource-group ${{ secrets.RESOURCE_GROUP }} --query "name" --output tsv || echo "notfound")
-        if [[ "$MI_EXISTS" == "notfound" ]]; then
-          echo "Managed Identity not found. Creating..."
-          az identity create --name ${{ secrets.MANAGED_IDENTITY_NAME }} --resource-group ${{ secrets.RESOURCE_GROUP }}
-        else
-          echo "Managed Identity already exists."
-        fi
 
     - name: Get Managed Identity Principal ID
       id: get_identity
@@ -112,7 +96,6 @@ jobs:
             --name ${{ secrets.APP_NAME }} \
             --resource-group ${{ secrets.RESOURCE_GROUP }} \
             --environment ${{ secrets.APP_ENVIRONMENT }} \
-            --location ${{ secrets.LOCATION }} \
             --image ${{ secrets.REGISTRY_NAME }}.azurecr.io/myapp:${{ github.sha }} \
             --registry-server ${{ secrets.REGISTRY_NAME }}.azurecr.io \
             --cpu 0.5 --memory 1Gi \
