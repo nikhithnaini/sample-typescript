@@ -1,70 +1,10 @@
-name: CI/CD Pipeline
-
-on:
-  push:
-    branches:
-      - main  # Triggers when code is pushed to the main branch
-  workflow_dispatch:  # Allows manual trigger
-
-jobs:
-  build-and-deploy:
-    runs-on: ubuntu-latest
-
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Set up Node.js
-      uses: actions/setup-node@v3
-      with:
-        node-version: '22'
-
-    - name: Install dependencies
-      run: npm install
-
-    - name: Build the app
-      run: npm run build
-    - name: checking secret 
-      run: echo '${{ secrets.AZURE_CREDENTIALS }}' | jq .
-    - name: Azure Login
-      uses: azure/login@v1
-      with:
-        creds: ${{ secrets.AZURE_CREDENTIALS }}
-        
-    
-    - name: Check if ACR exists, create if not
-      id: acr_check
+- name: Get ACR Resource ID
+      id: get_acr_id
       run: |
-        ACR_EXISTS=$(az acr show --name ${{ secrets.REGISTRY_NAME }} --resource-group ${{ secrets.RESOURCE_GROUP }} --query "name" --output tsv || echo "notfound")
-        if [[ "$ACR_EXISTS" == "notfound" ]]; then
-          echo "ACR not found. Creating..."
-          az acr create --name ${{ secrets.REGISTRY_NAME }} --resource-group ${{ secrets.RESOURCE_GROUP }} --sku Basic
-        else
-          echo "ACR already exists."
-        fi
-    - name: Build and Push Docker Image to ACR
-      run: |
-        IMAGE_TAG=${{ secrets.REGISTRY_NAME }}.azurecr.io/myapp:${{ github.sha }}
-        az acr login --name ${{ secrets.REGISTRY_NAME }}
-        docker build -t $IMAGE_TAG .
-        docker push $IMAGE_TAG
-        echo "IMAGE_TAG=$IMAGE_TAG" >> $GITHUB_ENV
+        ACR_ID=$(az acr show --name ${{ secrets.REGISTRY_NAME }} --resource-group ${{ secrets.RESOURCE_GROUP }} --query "id" --output tsv)
+        echo "ACR_ID=$ACR_ID" >> $GITHUB_ENV
 
-    - name: Create Managed Identity if not exists
-      id: managed_identity
-      run: |
-        MI_EXISTS=$(az identity show --name ${{ secrets.MANAGED_IDENTITY_NAME }} --resource-group ${{ secrets.RESOURCE_GROUP }} --query "name" --output tsv || echo "notfound")
-        if [[ "$MI_EXISTS" == "notfound" ]]; then
-          echo "Managed Identity not found. Creating..."
-          az identity create --name ${{ secrets.MANAGED_IDENTITY_NAME }} --resource-group ${{ secrets.RESOURCE_GROUP }}
-        else
-          echo "Managed Identity already exists."
-        fi
-    - name: Get Managed Identity Principal ID
-      id: get_identity
-      run: |
-        PRINCIPAL_ID=$(az identity show --name ${{ secrets.MANAGED_IDENTITY_NAME }} --resource-group ${{ secrets.RESOURCE_GROUP }} --query "principalId" --output tsv)
-        echo "PRINCIPAL_ID=$PRINCIPAL_ID" >> $GITHUB_ENV
+    # Assign AcrPull Role to Managed Identity
     - name: Assign AcrPull Role to Managed Identity
       run: |
-        az role assignment create --assignee ${{ env.PRINCIPAL_ID }} --role AcrPull --scope /subscriptions/${{ secrets.SUBSCRIPTION_ID }}/resourceGroups/${{ secrets.RESOURCE_GROUP }}/providers/Microsoft.ContainerRegistry/registries/${{ secrets.REGISTRY_NAME }}
+        az role assignment create --assignee ${{ env.PRINCIPAL_ID }} --role AcrPull --scope ${{ env.ACR_ID }}
