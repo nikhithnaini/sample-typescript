@@ -58,7 +58,7 @@ jobs:
     - name: Check if Container App exists, create if not
       id: container_app_check
       run: |
-        CONTAINER_APP_EXISTS=$(az containerapp show --name ${{ secrets.APP_NAME }} --resource-group ${{ secrets.RESOURCE_GROUP }} --query "name" --output tsv || echo "notfound")
+        CONTAINER_APP_EXISTS=$(az containerapp show --name ${{ secrets.APP_NAME }} --resource-group ${{ secrets.RESOURCE_GROUP }} --query "name" --output tsv 2>/dev/null || echo "notfound")
         
         if [[ "$CONTAINER_APP_EXISTS" == "notfound" ]]; then
           echo "Container App not found. Creating..."
@@ -80,14 +80,20 @@ jobs:
     - name: Get System-Assigned Identity Principal ID
       id: get_identity
       run: |
-        PRINCIPAL_ID=$(az containerapp identity show --name ${{ secrets.APP_NAME }} --resource-group ${{ secrets.RESOURCE_GROUP }} --query "principalId" --output tsv)
+        PRINCIPAL_ID=$(az containerapp identity show --name ${{ secrets.APP_NAME }} --resource-group ${{ secrets.RESOURCE_GROUP }} --query "principalId" --output tsv 2>/dev/null)
         if [ -z "$PRINCIPAL_ID" ]; then
           echo "Error: System-Assigned Identity Principal ID is empty."
           exit 1
         fi
         echo "PRINCIPAL_ID=$PRINCIPAL_ID" >> $GITHUB_ENV
 
-    # Assign AcrPull Role to System-Assigned Identity
+    # Assign AcrPull Role to System-Assigned Identity (only if not already assigned)
     - name: Assign AcrPull Role to System-Assigned Identity
       run: |
-        az role assignment create --assignee ${{ env.PRINCIPAL_ID }} --role AcrPull --scope /subscriptions/${{ secrets.SUBSCRIPTION_ID }}/resourceGroups/${{ secrets.RESOURCE_GROUP }}/providers/Microsoft.ContainerRegistry/registries/${{ secrets.REGISTRY_NAME }}
+        ROLE_EXISTS=$(az role assignment list --assignee ${{ env.PRINCIPAL_ID }} --role "AcrPull" --scope /subscriptions/${{ secrets.SUBSCRIPTION_ID }}/resourceGroups/${{ secrets.RESOURCE_GROUP }}/providers/Microsoft.ContainerRegistry/registries/${{ secrets.REGISTRY_NAME }} --query "[].roleDefinitionName" --output tsv)
+        if [[ "$ROLE_EXISTS" != "AcrPull" ]]; then
+          echo "Assigning AcrPull role..."
+          az role assignment create --assignee ${{ env.PRINCIPAL_ID }} --role AcrPull --scope /subscriptions/${{ secrets.SUBSCRIPTION_ID }}/resourceGroups/${{ secrets.RESOURCE_GROUP }}/providers/Microsoft.ContainerRegistry/registries/${{ secrets.REGISTRY_NAME }}
+        else
+          echo "AcrPull role is already assigned."
+        fi
