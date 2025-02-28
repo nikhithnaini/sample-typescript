@@ -97,7 +97,7 @@ jobs:
         if [[ "$CONTAINER_APP_EXISTS" == "notfound" ]]; then
           echo "Container App not found. Creating..."
           az containerapp create \
-            --name ${{ secrets.CONTAINER_APP_NAME }} \
+            --name ${{ secrets.APP_NAME }} \
             --resource-group ${{ secrets.RESOURCE_GROUP }} \
             --environment ${{ secrets.APP_ENVIRONMENT }} \
             --location ${{ secrets.LOCATION }} \
