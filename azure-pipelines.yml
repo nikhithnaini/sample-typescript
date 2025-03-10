@@ -1,80 +1,222 @@
-# Node.js CI/CD Pipeline for Azure App Service using Managed Identity
-
 trigger:
   branches:
     include:
-      - main  # Runs pipeline on main branch commits
-
-variables:
-  ACR_NAME: "typescriptimage"  # Azure Container Registry name
-  IMAGE_NAME: "my-app"
-  TAG: "latest"  # Unique build identifier
-  RESOURCE_GROUP: "linux-agent_group"
-  MANAGED_IDENTITY_NAME: "a717f3e4-b10b-4a70-b565-a471734765b7"  # User Assigned Managed Identity Client ID
-  APP_NAME: "typescript"  # Replace with your Azure App Service name
+      - main
 
 stages:
-# ✅ **Stage 1: Build and Push Docker Image**
-- stage: BuildAndPush
-  displayName: "Build & Push Docker Image"
-  jobs:
-  - job: BuildAndPushImage
-    pool:
-      name: linux-agent  # Ensure the agent has Docker installed
-    steps:
+  - stage: CI_CD_Deploy
+    displayName: "CI/CD Deployment Pipeline"
+    jobs:
+      - job: DeployApplication
+        displayName: "Run Tests, Build, Push, and Deploy"
+        pool:
+          name: "linux-agent"
+        steps:
+          # Step 1: Fetch Secrets from Azure Key Vault
+          - task: AzureKeyVault@2
+            inputs:
+              azureSubscription: "AzureDevOps-Connection"
+              KeyVaultName: "$(KEY_VAULT_NAME)"
+              SecretsFilter: "*"
+              runAsPreJob: false
 
-    # ✅ Authenticate to ACR using Managed Identity (No Secrets)
-    - script: |
-        az login --identity --client-id $(MANAGED_IDENTITY_NAME)
-        az acr login --name $(ACR_NAME)
-      displayName: "Login to ACR with Managed Identity"
+          # Step 2: Run Tests
+          - task: NodeTool@0
+            inputs:
+              versionSpec: "16.x"
+            displayName: "Install Node.js"
 
-    # ✅ Build the Docker Image
-    - script: |
-        docker build -t $(ACR_NAME).azurecr.io/$(IMAGE_NAME):$(TAG) .
-      displayName: "Build Docker Image"
+          - script: |
+              npm ci
+              npm run test
+            displayName: "Run Test Suite"
 
-    # ✅ Push the Image to ACR
-    - script: |
-        docker push $(ACR_NAME).azurecr.io/$(IMAGE_NAME):$(TAG)
-      displayName: "Push Image to ACR"
+          # Step 3: Check if ACR Exists
+          - task: AzureCLI@2
+            inputs:
+              azureSubscription: "AzureDevOps-Connection"
+              scriptType: "bash"
+              scriptLocation: "inlineScript"
+              inlineScript: |
+                echo "Checking if ACR $(ACR_NAME) exists..."
+                if ! az acr show --name $(ACR_NAME) --resource-group $(RESOURCE_GROUP) &> /dev/null; then
+                  echo "ERROR: ACR $(ACR_NAME) does not exist. Please create it first."
+                  exit 1
+                fi
+                echo "ACR $(ACR_NAME) exists."
 
-    # ✅ Show Pushed Image
-    - script: |
-        az acr repository show-tags --name $(ACR_NAME) --repository $(IMAGE_NAME)
-      displayName: "Verify Image in ACR"
+          # Step 4: Check if UMI has AcrPull Role
+          - task: AzureCLI@2
+            inputs:
+              azureSubscription: "AzureDevOps-Connection"
+              scriptType: "bash"
+              scriptLocation: "inlineScript"
+              inlineScript: |
+                echo "Checking if UMI has AcrPull permission..."
+                ACR_ROLE=$(az role assignment list --assignee $(MANAGED_IDENTITY_NAME) --scope /subscriptions/$(SUBSCRIPTION_ID)/resourceGroups/$(RESOURCE_GROUP)/providers/Microsoft.ContainerRegistry/registries/$(ACR_NAME) --query "[?roleDefinitionName=='AcrPull']" -o tsv)
+                if [[ -z "$ACR_ROLE" ]]; then
+                  echo "Assigning AcrPull role to UMI..."
+                  az role assignment create --assignee $(MANAGED_IDENTITY_NAME) --role "AcrPull" --scope /subscriptions/$(SUBSCRIPTION_ID)/resourceGroups/$(RESOURCE_GROUP)/providers/Microsoft.ContainerRegistry/registries/$(ACR_NAME)
+                  echo "AcrPull role assigned to UMI."
+                else
+                  echo "UMI already has AcrPull permission."
+                fi
 
-# ✅ **Stage 2: Deploy Container to Azure App Service**
-- stage: Deploy
-  displayName: "Deploy to Azure App Service"
-  jobs:
-  - job: DeployContainer
-    pool: linux-agent
+          # Step 5: Build & Push Docker Image
+          - task: AzureCLI@2
+            inputs:
+              azureSubscription: "AzureDevOps-Connection"
+              scriptType: "bash"
+              scriptLocation: "inlineScript"
+              inlineScript: |
+                az acr login --name $(ACR_NAME) --identity $(MANAGED_IDENTITY_NAME)
+                docker build -t $(ACR_NAME).azurecr.io/$(IMAGE_NAME):$(BUILD_BUILDID) .
+                docker push $(ACR_NAME).azurecr.io/$(IMAGE_NAME):$(BUILD_BUILDID)
+            displayName: "Build and Push Docker Image"
+
+          # Step 6: Check if Web App Exists
+          - task: AzureCLI@2
+            inputs:
+              azureSubscription: "AzureDevOps-Connection"
+              scriptType: "bash"
+              scriptLocation: "inlineScript"
+              inlineScript: |
+                echo "Checking if Web App $(APP_NAME) exists..."
+                if ! az webapp show --name $(APP_NAME) --resource-group $(RESOURCE_GROUP) &> /dev/null; then
+                  echo "ERROR: Web App $(APP_NAME) does not exist. Please create it first."
+                  exit 1
+                fi
+                echo "Web App $(APP_NAME) exists."
+
+          # Step 7: Check if Service Principal has Managed Identity Operator Role
+          - task: AzureCLI@2
+            inputs:
+              azureSubscription: "AzureDevOps-Connection"
+              scriptType: "bash"
+              scriptLocation: "inlineScript"
+              inlineScript: |
+                echo "Checking if Service Principal has Managed Identity Operator role..."
+                MI_ROLE=$(az role assignment list --assignee $(SERVICE_PRINCIPAL_ID) --scope /subscriptions/$(SUBSCRIPTION_ID)/resourceGroups/$(RESOURCE_GROUP)/providers/Microsoft.Web/sites/$(APP_NAME) --query "[?roleDefinitionName=='Managed Identity Operator']" -o tsv)
+                if [[ -z "$MI_ROLE" ]]; then
+                  echo "Assigning Managed Identity Operator role to Service Principal..."
+                  az role assignment create --assignee $(SERVICE_PRINCIPAL_ID) --role "Managed Identity Operator" --scope /subscriptions/$(SUBSCRIPTION_ID)/resourceGroups/$(RESOURCE_GROUP)/providers/Microsoft.Web/sites/$(APP_NAME)
+                  echo "Managed Identity Operator role assigned to Service Principal."
+                else
+                  echo "Service Principal already has Managed Identity Operator permission."
+                fi
+
+          # Step 8: Deploy Web App with Container
+          - task: AzureCLI@2
+            inputs:
+              azureSubscription: "AzureDevOps-Connection"
+              scriptType: "bash"
+              scriptLocation: "inlineScript"
+              inlineScript: |
+                az webapp config container set --name $(APP_NAME) --resource-group $(RESOURCE_GROUP) \
+                  --container-image-name $(ACR_NAME).azurecr.io/$(IMAGE_NAME):$(BUILD_BUILDID) \
+                  --container-registry-url https://$(ACR_NAME).azurecr.io
+
+                az webapp restart --name $(APP_NAME) --resource-group $(RESOURCE_GROUP)
+            displayName: "Deploy and Restart Web App"
+
+          - task: AzureCLI@2
+            inputs:
+              azureSubscription: "AzureDevOps-Connection"
+              scriptType: "bash"
+              scriptLocation: "inlineScript"
+              inlineScript: |
+                echo "Configuring diagnostic settings for Azure Monitor..."
+
+                # Enable logs for the web app
+                az monitor diagnostic-settings create \
+                  --name "WebAppDiagnostics" \
+                  --resource "/subscriptions/$(SUBSCRIPTION_ID)/resourceGroups/$(RESOURCE_GROUP)/providers/Microsoft.Web/sites/$(APP_NAME)" \
+                  --workspace $(LOG_ANALYTICS_WORKSPACE_ID) \
+                  --logs '[{"category": "AppServiceHTTPLogs", "enabled": true, "retentionPolicy": {"enabled": false, "days": 0}}, {"category": "AppServiceConsoleLogs", "enabled": true, "retentionPolicy": {"enabled": false, "days": 0}}, {"category": "AppServiceAppLogs", "enabled": true, "retentionPolicy": {"enabled": false, "days": 0}}]' \
+                  --metrics '[{"category": "AllMetrics", "enabled": true, "retentionPolicy": {"enabled": false, "days": 0}}]'
+
+                echo "Azure Monitor logs configured successfully."
+            displayName: "Enable Azure Monitor Logging"
+
+
+
+# # Node.js CI/CD Pipeline for Azure App Service using Managed Identity
+
+# trigger:
+#   branches:
+#     include:
+#       - main  # Runs pipeline on main branch commits
+
+# variables:
+#   ACR_NAME: "typescriptimage"  # Azure Container Registry name
+#   IMAGE_NAME: "my-app"
+#   TAG: "latest"  # Unique build identifier
+#   RESOURCE_GROUP: "linux-agent_group"
+#   MANAGED_IDENTITY_NAME: "a717f3e4-b10b-4a70-b565-a471734765b7"  # User Assigned Managed Identity Client ID
+#   APP_NAME: "typescript"  # Replace with your Azure App Service name
+
+# stages:
+# # ✅ **Stage 1: Build and Push Docker Image**
+# - stage: BuildAndPush
+#   displayName: "Build & Push Docker Image"
+#   jobs:
+#   - job: BuildAndPushImage
+#     pool:
+#       name: linux-agent  # Ensure the agent has Docker installed
+#     steps:
+
+#     # ✅ Authenticate to ACR using Managed Identity (No Secrets)
+#     - script: |
+#         az login --identity --client-id $(MANAGED_IDENTITY_NAME)
+#         az acr login --name $(ACR_NAME)
+#       displayName: "Login to ACR with Managed Identity"
+
+#     # ✅ Build the Docker Image
+#     - script: |
+#         docker build -t $(ACR_NAME).azurecr.io/$(IMAGE_NAME):$(TAG) .
+#       displayName: "Build Docker Image"
+
+#     # ✅ Push the Image to ACR
+#     - script: |
+#         docker push $(ACR_NAME).azurecr.io/$(IMAGE_NAME):$(TAG)
+#       displayName: "Push Image to ACR"
+
+#     # ✅ Show Pushed Image
+#     - script: |
+#         az acr repository show-tags --name $(ACR_NAME) --repository $(IMAGE_NAME)
+#       displayName: "Verify Image in ACR"
+
+# # ✅ **Stage 2: Deploy Container to Azure App Service**
+# - stage: Deploy
+#   displayName: "Deploy to Azure App Service"
+#   jobs:
+#   - job: DeployContainer
+#     pool: linux-agent
       
 
-    steps:
-    # ✅ Authenticate using Managed Identity
-    - script: |
-            az login --identity --client-id $(MANAGED_IDENTITY_NAME) --allow-no-subscriptions
-      displayName: "Login using Managed Identity"
+#     steps:
+#     # ✅ Authenticate using Managed Identity
+#     - script: |
+#             az login --identity --client-id $(MANAGED_IDENTITY_NAME) --allow-no-subscriptions
+#       displayName: "Login using Managed Identity"
 
     
 
-    # ✅ Deploy container to Azure App Service
-    - script: |
-        az webapp config container set --name $(APP_NAME) \
-              --resource-group $(RESOURCE_GROUP) \
-              --container-image-name $(ACR_NAME).azurecr.io/$(IMAGE_NAME):$(TAG) \
-              --container-registry-url https://$(ACR_NAME).azurecr.io
-      displayName: "Deploy Container to App Service"
+#     # ✅ Deploy container to Azure App Service
+#     - script: |
+#         az webapp config container set --name $(APP_NAME) \
+#               --resource-group $(RESOURCE_GROUP) \
+#               --container-image-name $(ACR_NAME).azurecr.io/$(IMAGE_NAME):$(TAG) \
+#               --container-registry-url https://$(ACR_NAME).azurecr.io
+#       displayName: "Deploy Container to App Service"
 
-    # ✅ Set application settings (Expose Port 5000)
-    - script: |
-        az webapp config appsettings set --name $(APP_NAME) --resource-group $(RESOURCE_GROUP) \
-          --settings WEBSITES_PORT=5000
-      displayName: "Set Port to 5000"
+#     # ✅ Set application settings (Expose Port 5000)
+#     - script: |
+#         az webapp config appsettings set --name $(APP_NAME) --resource-group $(RESOURCE_GROUP) \
+#           --settings WEBSITES_PORT=5000
+#       displayName: "Set Port to 5000"
 
-    # ✅ Restart App Service to apply changes
-    - script: |
-        az webapp restart --name $(APP_NAME) --resource-group $(RESOURCE_GROUP)
-      displayName: "Restart App Service"
+#     # ✅ Restart App Service to apply changes
+#     - script: |
+#         az webapp restart --name $(APP_NAME) --resource-group $(RESOURCE_GROUP)
+#       displayName: "Restart App Service"
